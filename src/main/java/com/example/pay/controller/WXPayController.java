@@ -137,6 +137,7 @@ public class WXPayController {
      * 注意：
      *      微信在次日9点启动生成前一天的对账单，建议商户10点后再获取；
      *      对账单接口只能下载三个月以内的账单。
+     * 下载对账单：https://pay.weixin.qq.com/wiki/doc/api/jsapi.php?chapter=9_6
      * @throws Exception
      */
     @PostMapping("/downloadBill")

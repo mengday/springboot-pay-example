@@ -4,7 +4,7 @@
 
 支付宝支付接口:
 
-- AlipayController 支付宝-通用接口
+- AlipayController 支付宝-通用接口(包含对账)
 - AlipayF2FPayController 支付宝-当面付
 - AlipayPagePayController 支付宝-电脑网站支付
 - AlipayWAPPayController 支付宝-手机网站支付

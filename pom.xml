@@ -65,6 +65,12 @@
             <artifactId>core</artifactId>
             <version>3.2.1</version>
         </dependency>
+
+        <dependency>
+            <groupId>org.apache.httpcomponents</groupId>
+            <artifactId>httpclient</artifactId>
+            <version>4.5.6</version>
+        </dependency>
         <!-- alipay end -->
 
         <dependency>

@@ -2,29 +2,38 @@ package com.example.pay.controller;
 
 import com.alipay.api.AlipayApiException;
 import com.alipay.api.AlipayClient;
-import com.alipay.api.domain.AlipayTradeCloseModel;
-import com.alipay.api.domain.AlipayTradeFastpayRefundQueryModel;
-import com.alipay.api.domain.AlipayTradeRefundModel;
+import com.alipay.api.domain.*;
 import com.alipay.api.internal.util.AlipaySignature;
+import com.alipay.api.request.AlipayDataDataserviceBillDownloadurlQueryRequest;
 import com.alipay.api.request.AlipayTradeCloseRequest;
 import com.alipay.api.request.AlipayTradeFastpayRefundQueryRequest;
 import com.alipay.api.request.AlipayTradeRefundRequest;
-import com.alipay.api.response.AlipayTradeCloseResponse;
-import com.alipay.api.response.AlipayTradeFastpayRefundQueryResponse;
-import com.alipay.api.response.AlipayTradeQueryResponse;
-import com.alipay.api.response.AlipayTradeRefundResponse;
+import com.alipay.api.response.*;
 import com.alipay.demo.trade.model.builder.AlipayTradeQueryRequestBuilder;
 import com.alipay.demo.trade.model.result.AlipayF2FQueryResult;
 import com.alipay.demo.trade.service.AlipayTradeService;
 import com.example.pay.configuration.AlipayProperties;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.http.HttpEntity;
+import org.apache.http.client.config.RequestConfig;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
+import org.apache.http.util.EntityUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.*;
 
 import javax.servlet.http.HttpServletRequest;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.UnsupportedEncodingException;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.Map;
+import java.nio.charset.Charset;
+import java.util.*;
+import java.util.stream.Collectors;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 /**
  * 支付宝通用接口.
@@ -222,6 +231,47 @@ public class AlipayController {
         return alipayResponse.getBody();
     }
 
+
+    /**
+     * billDate : 账单时间：日账单格式为yyyy-MM-dd，月账单格式为yyyy-MM。
+     * 查询对账单下载地址: https://docs.open.alipay.com/api_15/alipay.data.dataservice.bill.downloadurl.query/
+     * @param billDate
+     */
+    @GetMapping("/bill")
+    @ResponseBody
+    public void queryBill(String billDate) {
+        // 1. 查询对账单下载地址
+        AlipayDataDataserviceBillDownloadurlQueryRequest request = new AlipayDataDataserviceBillDownloadurlQueryRequest();
+        AlipayDataDataserviceBillDownloadurlQueryModel model = new AlipayDataDataserviceBillDownloadurlQueryModel();
+        model.setBillType("trade");
+        model.setBillDate(billDate);
+        request.setBizModel(model);
+        try {
+            AlipayDataDataserviceBillDownloadurlQueryResponse response = alipayClient.execute(request);
+            if (response.isSuccess()) {
+                String billDownloadUrl = response.getBillDownloadUrl();
+                System.out.println(billDownloadUrl);
+
+                // 2. 下载对账单
+                List<String> orderList = this.downloadBill(billDownloadUrl);
+                System.out.println(orderList);
+                // 3. 先比较支付宝的交易合计/退款合计笔数/实收金额是否和自己数据库中的数据一致，如果不一致证明有异常，再具体找出那些订单有异常
+                // 查找支付宝支付成功而自己支付失败的记录和支付宝支付失败而自己认为支付成功的异常订单记录到数据库
+
+            } else {
+                // 失败
+                String code = response.getCode();
+                String msg = response.getMsg();
+                String subCode = response.getSubCode();
+                String subMsg = response.getSubMsg();
+            }
+        } catch (AlipayApiException e) {
+            e.printStackTrace();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
     /**
      * 校验签名
      * @param request
@@ -254,5 +304,71 @@ public class AlipayController {
             log.debug("verify sigin error, exception is:{}", e);
             return false;
         }
+    }
+
+    /**
+     * 下载下来的是一个【账号_日期.csv.zip】文件（zip压缩文件名，里面有多个.csv文件）
+     * 账号_日期_业务明细 ： 支付宝业务明细查询
+     * 账号_日期_业务明细(汇总)：支付宝业务汇总查询
+     *
+     * 注意：如果数据量比较大，该方法可能需要更长的执行时间
+     * @param billDownLoadUrl
+     * @return
+     * @throws IOException
+     */
+    private List<String> downloadBill(String billDownLoadUrl) throws IOException {
+        String ordersStr = "";
+        CloseableHttpClient httpClient = HttpClients.createDefault();
+        RequestConfig config = RequestConfig.custom()
+                .setConnectTimeout(60000)
+                .setConnectionRequestTimeout(60000)
+                .setSocketTimeout(60000)
+                .build();
+        HttpGet httpRequest = new HttpGet(billDownLoadUrl);
+        httpRequest.setConfig(config);
+        CloseableHttpResponse response = null;
+        byte[] data = null;
+        try {
+            response = httpClient.execute(httpRequest);
+            HttpEntity entity = response.getEntity();
+            data = EntityUtils.toByteArray(entity);
+        } finally {
+            response.close();
+            httpClient.close();
+        }
+        ZipInputStream zipInputStream = new ZipInputStream(new ByteArrayInputStream(data), Charset.forName("GBK"));
+        ZipEntry zipEntry = null;
+        try{
+            while( (zipEntry = zipInputStream.getNextEntry()) != null){
+                ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+                try{
+                    String name = zipEntry.getName();
+                    // 只要明细不要汇总
+                    if(name.contains("汇总")){
+                        continue;
+                    }
+                    byte[] byteBuff = new byte[4096];
+                    int bytesRead = 0;
+                    while ((bytesRead = zipInputStream.read(byteBuff)) != -1) {
+                        byteArrayOutputStream.write(byteBuff, 0, bytesRead);
+                    }
+                    ordersStr = byteArrayOutputStream.toString("GBK");
+                }finally {
+                    byteArrayOutputStream.close();
+                    zipInputStream.closeEntry();
+                }
+            }
+        } finally {
+            zipInputStream.close();
+        }
+
+        if (ordersStr.equals("")) {
+            return null;
+        }
+        String[] bills = ordersStr.split("\r\n");
+        List<String> billList = Arrays.asList(bills);
+        billList = billList.parallelStream().map(item -> item.replace("\t", "")).collect(Collectors.toList());
+
+        return billList;
     }
 }
