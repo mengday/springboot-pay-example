@@ -173,6 +173,7 @@ public class WXPayClient extends WXPay {
      */
     public Map<String, String> getSignKey() throws Exception {
         Map<String, String> reqData = new HashMap<>();
+        reqData.put("appid", config.getAppID());
         reqData.put("mch_id", config.getMchID());
         reqData.put("nonce_str", WXPayUtil.generateNonceStr());
         String sign = WXPayUtil.generateSignature(reqData, config.getKey(), WXPayConstants.SignType.MD5);
